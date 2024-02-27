@@ -285,3 +285,62 @@ TEST_F(EqualityTest, OneCircuitEmptyZXChecker) {
   ecm.run();
   EXPECT_EQ(ecm.equivalence(), ec::EquivalenceCriterion::Equivalent);
 }
+
+TEST_F(EqualityTest, NotEqualBecauseOfIdleQubitStripping) {
+  qc1 = qc::QuantumComputation(2, 1);
+  qc2 = qc::QuantumComputation(2, 1);
+
+  // we measure only the second qubit
+  qc1.x(1);
+  qc1.h(0);
+  qc1.measure(1, 0);
+
+  // the first qubit doesn't have gates here, so stripIdleQubits() will remove
+  // it and change the output permutation accordingliy
+  qc2.x(1);
+  qc2.measure(1, 0);
+
+  // set the first qubit as a garbage qubit
+  qc1.setLogicalQubitGarbage(0);
+  qc2.setLogicalQubitGarbage(0);
+
+  // run the construction checker -> it will result in `NotEquivalent` because
+  // the two circuits have a different output permutation after
+  // stripIdleQubits()
+  config.execution.runConstructionChecker = true;
+  ec::EquivalenceCheckingManager ecm(qc1, qc2, config);
+  ecm.run();
+  EXPECT_EQ(ecm.equivalence(), ec::EquivalenceCriterion::NotEquivalent);
+}
+
+TEST_F(EqualityTest, EquivalentEvenThoughItsTheSameAsBefore) {
+  qc1 = qc::QuantumComputation(2, 1);
+  qc2 = qc::QuantumComputation(2, 1);
+
+  // we measure only the second qubit
+  qc1.x(1);
+  qc1.h(0);
+  qc1.measure(1, 0);
+
+  // the first qubits has gates that are mutually inverse. However, the
+  // EquivalenceCheckingManager will not remove the first qubit, because it has
+  // gates and therefore it isn't an idle qubit
+  qc2.x(1);
+  qc2.h(0);
+  qc2.h(0);
+  qc2.measure(1, 0);
+
+  // set the first qubit as a garbage qubit
+  qc1.setLogicalQubitGarbage(0);
+  qc2.setLogicalQubitGarbage(0);
+
+  // run the construction checker -> it will result in `Equivalent` even though
+  // they are the same circuits as the previous test. The two circuits have the
+  // same output permutation after stripIdleQubits(), because no qubits are
+  // stripped
+  config.execution.runConstructionChecker = true;
+  ec::EquivalenceCheckingManager ecm(qc1, qc2, config);
+  ecm.run();
+  EXPECT_EQ(ecm.equivalence(),
+            ec::EquivalenceCriterion::EquivalentUpToGlobalPhase);
+}
