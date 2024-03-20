@@ -895,7 +895,7 @@ void partialEquivalencCheckingBenchmarks(const qc::Qubit          minN,
                                          const ec::Configuration& config,
                                          std::string_view         filename) {
   std::fstream log2("benchmark_log.txt", std::ios::out | std::ios::app);
-  log2 << "starting benhcmark.\nminN: " << minN << ", maxN: " << maxN
+  log2 << "starting benchmark.\nminN: " << minN << ", maxN: " << maxN
        << ", reps: " << reps << ", addAncilla: " << addAncilla
        << ", filename: " << filename.data() << "\n";
   log2.close();
@@ -957,7 +957,7 @@ void partialEquivalencCheckingBenchmarks(const qc::Qubit          minN,
 
 TEST_F(PartialEquivalenceTest, Benchmark) {
   config.execution.runConstructionChecker = true;
-  config.execution.timeout                = 100;
+  config.execution.timeout                = 600;
   qc::Qubit minN                          = 5;
   qc::Qubit maxN                          = 31;
   qc::Qubit reps                          = 20;
