@@ -9,6 +9,7 @@
 #include "operations/StandardOperation.hpp"
 
 #include "gtest/gtest.h"
+#include <fstream>
 
 namespace dd {
 
@@ -891,59 +892,87 @@ void partialEquivalencCheckingBenchmarks(const qc::Qubit          minN,
                                          const qc::Qubit          maxN,
                                          const size_t             reps,
                                          const bool               addAncilla,
-                                         const ec::Configuration& config) {
-  std::mt19937 gen(55);
+                                         const ec::Configuration& config,
+                                         std::string_view         filename) {
+  std::fstream log2("benchmark_log.txt", std::ios::out | std::ios::app);
+  log2 << "starting benhcmark.\nminN: " << minN << ", maxN: " << maxN
+       << ", reps: " << reps << ", addAncilla: " << addAncilla
+       << ", filename: " << filename.data() << "\n";
+  log2.close();
 
-  for (qc::Qubit n = minN; n < maxN; n++) {
+  for (qc::Qubit d = minN; d < maxN; d += 5) {
     double      totalTime{0};
-    std::size_t totalGates{0};
+    std::size_t totalGatesC1{0};
+    std::size_t totalGatesC2{0};
+    std::size_t timeouts{0};
+    qc::Qubit   n{0};
+    if (addAncilla) {
+      n = static_cast<qc::Qubit>(1.5 * d);
+    } else {
+      n = d;
+    }
+    const auto m = static_cast<qc::Qubit>(0.5 * d);
     for (size_t k = 0; k < reps; k++) {
-      qc::Qubit d{0};
-      if (addAncilla) {
-        std::uniform_int_distribution<qc::Qubit> nrDataQubits(1, n);
-        d = nrDataQubits(gen);
-      } else {
-        d = n;
-      }
-      std::uniform_int_distribution<qc::Qubit> nrDataQubits(1, d);
-      const qc::Qubit                          m = nrDataQubits(gen);
-
       const auto [c1, c2] = dd::generatePartiallyEquivalentCircuits(n, d, m);
 
       ec::EquivalenceCheckingManager ecm(c1, c2, config);
       ecm.run();
-      EXPECT_TRUE(ecm.getResults().consideredEquivalent());
+      if (ecm.equivalence() == ec::EquivalenceCriterion::NoInformation) {
+        timeouts++;
+      } else {
+        EXPECT_TRUE(ecm.getResults().consideredEquivalent());
+      }
 
-      const auto duration = ecm.getResults().checkTime;
-
-      totalTime += duration;
-      totalGates += c2.size();
+      const auto   duration = ecm.getResults().checkTime;
+      std::fstream log("benchmark_log.txt", std::ios::out | std::ios::app);
+      if (ecm.equivalence() != ec::EquivalenceCriterion::NoInformation) {
+        totalTime += duration;
+        totalGatesC1 += c1.size();
+        totalGatesC2 += c2.size();
+      } else {
+        log << "TIMEOUT; ";
+      }
+      log << "k: " << k << ", d: " << d << ", m: " << m
+          << ", time: " << duration << "\n";
+      log.close();
     }
-    std::cout << "\nnumber of qubits = " << n << "; number of reps = " << reps
-              << "; average time = "
-              << (totalTime / static_cast<double>(reps) /*/ 1000000.*/)
-              << " seconds; average number of gates = "
-              << (static_cast<double>(totalGates) / static_cast<double>(reps))
-              << "\n";
+    std::fstream resultsFile(filename.data(), std::ios::out | std::ios::app);
+    resultsFile << "" << n << "," << d << "," << m << "," << reps << ","
+                << (totalTime / static_cast<double>(reps - timeouts)) << ","
+                << (static_cast<double>(totalGatesC1) /
+                    static_cast<double>(reps - timeouts))
+                << ","
+                << (static_cast<double>(totalGatesC2) /
+                    static_cast<double>(reps - timeouts))
+                << "," << timeouts << "," << reps - timeouts << "\n";
+
+    if (timeouts >= reps - 3) {
+      resultsFile << "stopping because of too many timeouts\n";
+      resultsFile.close();
+      return;
+    }
+    resultsFile.close();
   }
 }
 
 TEST_F(PartialEquivalenceTest, Benchmark) {
   config.execution.runConstructionChecker = true;
-  const size_t minN                       = 2;
-  const size_t maxN                       = 8;
-  const size_t reps                       = 10;
-  std::cout << "Partial equivalence check\n";
-  partialEquivalencCheckingBenchmarks(minN, maxN, reps, true, config);
-}
+  config.execution.timeout                = 100;
+  qc::Qubit minN                          = 5;
+  qc::Qubit maxN                          = 31;
+  qc::Qubit reps                          = 20;
+  partialEquivalencCheckingBenchmarks(minN, maxN, reps, true, config,
+                                      "construction_benchmarks.txt");
+  partialEquivalencCheckingBenchmarks(minN, maxN, reps, false, config,
+                                      "construction_no_ancilla.txt");
 
-TEST_F(PartialEquivalenceTest, ZeroAncillaBenchmark) {
-  config.execution.runAlternatingChecker = true;
-  const size_t minN                      = 3;
-  const size_t maxN                      = 14;
-  const size_t reps                      = 10;
-  std::cout << "Zero-ancilla partial equivalence check\n";
-  partialEquivalencCheckingBenchmarks(minN, maxN, reps, false, config);
+  config.execution.runConstructionChecker = false;
+  config.execution.runAlternatingChecker  = true;
+  minN                                    = 5;
+  maxN                                    = 101;
+  reps                                    = 20;
+  partialEquivalencCheckingBenchmarks(minN, maxN, reps, false, config,
+                                      "alternating_benchmark.txt");
 }
 
 TEST_F(PartialEquivalenceTest, ConstructionCheckerPartiallyEquivalent) {
