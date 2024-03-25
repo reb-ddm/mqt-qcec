@@ -566,7 +566,10 @@ void partialEquivalencCheckingBenchmarks(
     const qc::Qubit minN, const qc::Qubit maxN, const size_t reps,
     const bool addAncilla, const ec::Configuration& config,
     const std::string& filename, const std::string& directoryname) {
-  std::fstream log2("benchmark_log.txt", std::ios::out | std::ios::app);
+  std::string rootDirectoryBenchmarks = "../../benchmarks/";
+
+  std::fstream log2(rootDirectoryBenchmarks + "benchmark_log.txt",
+                    std::ios::out | std::ios::app);
   log2 << "starting benchmark.\nminN: " << minN << ", maxN: " << maxN
        << ", reps: " << reps << ", addAncilla: " << addAncilla
        << ", filename: " << filename << "\n";
@@ -588,10 +591,11 @@ void partialEquivalencCheckingBenchmarks(
       std::string circuitsFilename = std::to_string(d) + "_" +
                                      std::to_string(m) + "_" +
                                      std::to_string(k) + ".qasm";
-      qc::QuantumComputation c1{"./benchmarkCircuits" + directoryname + "a/" +
-                                circuitsFilename};
-      qc::QuantumComputation c2{"./benchmarkCircuits" + directoryname + "b/" +
-                                circuitsFilename};
+
+      qc::QuantumComputation c1{rootDirectoryBenchmarks + "benchmarkCircuits" +
+                                directoryname + "a/" + circuitsFilename};
+      qc::QuantumComputation c2{rootDirectoryBenchmarks + "benchmarkCircuits" +
+                                directoryname + "b/" + circuitsFilename};
 
       // set garbage and ancillary qubits
       c1.setLogicalQubitsAncillary(d, n - 1);
@@ -608,7 +612,8 @@ void partialEquivalencCheckingBenchmarks(
       }
 
       const auto   duration = ecm.getResults().checkTime;
-      std::fstream log("benchmark_log.txt", std::ios::out | std::ios::app);
+      std::fstream log(rootDirectoryBenchmarks + "benchmark_log.txt",
+                       std::ios::out | std::ios::app);
       if (ecm.equivalence() != ec::EquivalenceCriterion::NoInformation) {
         totalTime += duration;
       } else {
@@ -620,7 +625,8 @@ void partialEquivalencCheckingBenchmarks(
           << ", time: " << duration << "\n";
       log.close();
     }
-    std::fstream resultsFile(filename.data(), std::ios::out | std::ios::app);
+    std::fstream resultsFile(rootDirectoryBenchmarks + filename,
+                             std::ios::out | std::ios::app);
     resultsFile << "" << n << "," << d << "," << m << "," << reps << ","
                 << (totalTime / static_cast<double>(reps - timeouts)) << ","
                 << (static_cast<double>(totalGatesC1) /
