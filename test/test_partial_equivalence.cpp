@@ -5,11 +5,15 @@
 
 #include "EquivalenceCheckingManager.hpp"
 #include "QuantumComputation.hpp"
+#include "dd/Package.hpp"
 #include "operations/OpType.hpp"
 #include "operations/StandardOperation.hpp"
 
 #include "gtest/gtest.h"
+#include <filesystem>
 #include <fstream>
+#include <memory>
+#include <random>
 
 namespace dd {
 
@@ -91,8 +95,8 @@ void addStandardOperationToCircuit(QuantumComputation&      circuit,
 }
 
 std::vector<qc::Qubit>
-fiveDiffferentRandomNumbers(const qc::Qubit min, const qc::Qubit max,
-                            std::mt19937_64& randomGenerator) {
+threeDiffferentRandomNumbers(const qc::Qubit min, const qc::Qubit max,
+                             std::mt19937_64& randomGenerator) {
   std::vector<qc::Qubit> numbers;
 
   for (qc::Qubit i = min; i < max; i++) {
@@ -101,7 +105,7 @@ fiveDiffferentRandomNumbers(const qc::Qubit min, const qc::Qubit max,
   std::shuffle(numbers.begin(), numbers.end(), randomGenerator);
 
   const int64_t lengthOutputVector{
-      static_cast<int64_t>(std::min<size_t>(5UL, numbers.size()))};
+      static_cast<int64_t>(std::min<size_t>(3UL, numbers.size()))};
 
   std::vector<qc::Qubit> outputVector(numbers.begin(),
                                       numbers.begin() + lengthOutputVector);
@@ -191,46 +195,59 @@ makeRandomStandardOperation(const size_t n, const qc::Qubit nrQubits,
                             const qc::Qubit  min,
                             std::mt19937_64& randomGenerator) {
   const auto randomNumbers =
-      fiveDiffferentRandomNumbers(min, min + nrQubits, randomGenerator);
+      threeDiffferentRandomNumbers(min, min + nrQubits, randomGenerator);
 
-  // choose one of the non-compound operations, but not "None", and also
-  // not GPhase or I or Barrier
-  std::uniform_int_distribution<> randomDistrOpType(H, RZX);
-  auto randomOpType = static_cast<OpType>(randomDistrOpType(randomGenerator));
-  const qc::Qubit randomTarget1 = randomNumbers[0];
-  qc::Qubit       randomTarget2{min};
-  if (randomNumbers.size() > 1) {
-    randomTarget2 = randomNumbers[1];
-  };
-  // choose random controls, but not more than available qubits
+  std::uniform_int_distribution<>       randomDistrOpType(H, Tdg);
+  const qc::Qubit                       randomTarget = randomNumbers[0];
   std::uniform_int_distribution<size_t> randomDistrNrControls(0, 2);
-  size_t nrControls = std::min(randomNumbers.size() - 3,
-                               randomDistrNrControls(randomGenerator));
-  if (randomNumbers.size() < 3) {
-    nrControls = 0;
-  }
-  if (nrControls == 2) {
-    // otherwise Toffoli gates are almost never generated
-    randomOpType = qc::X;
-  }
+  size_t   nrControls = std::min(randomNumbers.size() - 1,
+                                 randomDistrNrControls(randomGenerator));
   Controls randomControls{};
   for (size_t i = 0; i < nrControls; i++) {
     randomControls.emplace(randomNumbers[i + 2]);
   }
-  std::uniform_real_distribution<fp> randomDistrParameters(0, 2 * PI);
-  const fp randomParameter1 = randomDistrParameters(randomGenerator);
-  const fp randomParameter2 = randomDistrParameters(randomGenerator);
-  const fp randomParameter3 = randomDistrParameters(randomGenerator);
-  return convertToStandardOperation(
-      n, nrQubits, randomOpType, randomTarget1, randomTarget2, randomParameter1,
-      randomParameter2, randomParameter3, randomControls);
+
+  // Sliqec only supports the following gates
+  std::vector<StandardOperation> possibleGates{};
+  if (nrControls == 0) {
+    possibleGates = {StandardOperation{n, randomTarget, qc::X},
+                     StandardOperation{n, randomTarget, qc::Y},
+                     StandardOperation{n, randomTarget, qc::Z},
+                     StandardOperation{n, randomTarget, qc::H},
+                     StandardOperation{n, randomTarget, qc::S},
+                     StandardOperation{n, randomTarget, qc::Sdg},
+                     StandardOperation{n, randomTarget, qc::T},
+                     StandardOperation{n, randomTarget, qc::Tdg}};
+  } else if (nrControls == 1) {
+    possibleGates = {
+        StandardOperation{n, randomControls, randomTarget, qc::RX, {PI_2}},
+        StandardOperation{n, randomControls, randomTarget, qc::RX, {-PI_2}},
+        StandardOperation{n, randomControls, randomTarget, qc::RY, {PI_2}},
+        StandardOperation{n, randomControls, randomTarget, qc::RY, {-PI_2}},
+        StandardOperation{n, randomControls, randomTarget, qc::X},
+        StandardOperation{n, randomControls, randomTarget, qc::Z},
+        StandardOperation{
+            n, Targets{randomTarget, randomControls.begin()->qubit}, qc::SWAP}};
+  } else if (nrControls == 2) {
+    auto randomControls2 = randomControls;
+    auto control1        = randomControls2.begin();
+    auto qubitControl1   = control1->qubit;
+    randomControls2.erase(control1);
+    possibleGates = {StandardOperation{n, randomControls, randomTarget, qc::X},
+                     StandardOperation{n, randomControls2,
+                                       Targets{randomTarget, qubitControl1},
+                                       qc::SWAP}};
+  }
+  std::uniform_int_distribution<size_t> randomDistrOp(0, possibleGates.size());
+
+  return possibleGates[randomDistrOp(randomGenerator)];
 }
 
 /**
-  Generate random benchmarks for partial equivalence checking. Returns pairs of
-circuits which are partially equivalent, following the method described in the
-paper "Partial Equivalence Checking of Quantum
-Circuits" (https://arxiv.org/abs/2208.07564) in Section VI. B.
+  Generate random benchmarks for partial equivalence checking. Returns pairs
+of circuits which are partially equivalent, following the method described in
+the paper "Partial Equivalence Checking of Quantum Circuits"
+(https://arxiv.org/abs/2208.07564) in Section VI. B.
   @param n number of qubits of the resulting circuits
   @param d number of data qubits in the resulting circuits
   @param m number of measured qubits in the resulting circuit
@@ -256,9 +273,6 @@ generatePartiallyEquivalentCircuits(const size_t n, const qc::Qubit d,
     circuit1.h(i);
     circuit2.h(i);
   }
-
-  circuit1.barrier();
-  circuit2.barrier();
 
   // 2) Totally equivalent subcircuits
   // Generate a random subcircuit with d qubits and 3*d gates to apply
@@ -312,9 +326,9 @@ generatePartiallyEquivalentCircuits(const size_t n, const qc::Qubit d,
 
   // 5) CNOT gates
   // For each ancilla qubit, add a CNOT that has the ancilla as control qubit,
-  // and any data qubit as target. As ancilla qubits are initially set to 0 and
-  // we haven't added any other gates to the ancilla qubits until now, these
-  // CNOT gates do not affect the circuit.
+  // and any data qubit as target. As ancilla qubits are initially set to 0
+  // and we haven't added any other gates to the ancilla qubits until now,
+  // these CNOT gates do not affect the circuit.
   if (d > 0) {
     qc::Qubit currentDataQubit = 0;
     for (qc::Qubit currentAncillaQubit = d; currentAncillaQubit < n;
@@ -888,16 +902,14 @@ TEST_F(PartialEquivalenceTest, ConstructionCheckerSliQECPeriodFinding8Qubits) {
   EXPECT_EQ(ecm.equivalence(), ec::EquivalenceCriterion::Equivalent);
 }
 
-void partialEquivalencCheckingBenchmarks(const qc::Qubit          minN,
-                                         const qc::Qubit          maxN,
-                                         const size_t             reps,
-                                         const bool               addAncilla,
-                                         const ec::Configuration& config,
-                                         std::string_view         filename) {
+void partialEquivalencCheckingBenchmarks(
+    const qc::Qubit minN, const qc::Qubit maxN, const size_t reps,
+    const bool addAncilla, const ec::Configuration& config,
+    const std::string& filename, const std::string& directoryname) {
   std::fstream log2("benchmark_log.txt", std::ios::out | std::ios::app);
   log2 << "starting benchmark.\nminN: " << minN << ", maxN: " << maxN
        << ", reps: " << reps << ", addAncilla: " << addAncilla
-       << ", filename: " << filename.data() << "\n";
+       << ", filename: " << filename << "\n";
   log2.close();
 
   for (qc::Qubit d = minN; d < maxN; d += 5) {
@@ -913,7 +925,13 @@ void partialEquivalencCheckingBenchmarks(const qc::Qubit          minN,
     }
     const auto m = static_cast<qc::Qubit>(0.5 * d);
     for (size_t k = 0; k < reps; k++) {
-      const auto [c1, c2] = dd::generatePartiallyEquivalentCircuits(n, d, m);
+      std::string circuitsFilename = std::to_string(d) + "_" +
+                                     std::to_string(m) + "_" +
+                                     std::to_string(k) + ".qasm";
+      const qc::QuantumComputation c1{"./benchmarkCircuits" + directoryname +
+                                      "a/" + circuitsFilename};
+      const qc::QuantumComputation c2{"./benchmarkCircuits" + directoryname +
+                                      "b/" + circuitsFilename};
 
       ec::EquivalenceCheckingManager ecm(c1, c2, config);
       ecm.run();
@@ -927,11 +945,11 @@ void partialEquivalencCheckingBenchmarks(const qc::Qubit          minN,
       std::fstream log("benchmark_log.txt", std::ios::out | std::ios::app);
       if (ecm.equivalence() != ec::EquivalenceCriterion::NoInformation) {
         totalTime += duration;
-        totalGatesC1 += c1.size();
-        totalGatesC2 += c2.size();
       } else {
         log << "TIMEOUT; ";
       }
+      totalGatesC1 += c1.size();
+      totalGatesC2 += c2.size();
       log << "k: " << k << ", d: " << d << ", m: " << m
           << ", time: " << duration << "\n";
       log.close();
@@ -940,10 +958,10 @@ void partialEquivalencCheckingBenchmarks(const qc::Qubit          minN,
     resultsFile << "" << n << "," << d << "," << m << "," << reps << ","
                 << (totalTime / static_cast<double>(reps - timeouts)) << ","
                 << (static_cast<double>(totalGatesC1) /
-                    static_cast<double>(reps - timeouts))
+                    static_cast<double>(reps))
                 << ","
                 << (static_cast<double>(totalGatesC2) /
-                    static_cast<double>(reps - timeouts))
+                    static_cast<double>(reps))
                 << "," << timeouts << "," << reps - timeouts << "\n";
 
     if (timeouts >= reps - 3) {
@@ -962,9 +980,11 @@ TEST_F(PartialEquivalenceTest, Benchmark) {
   qc::Qubit maxN                          = 31;
   qc::Qubit reps                          = 20;
   partialEquivalencCheckingBenchmarks(minN, maxN, reps, true, config,
-                                      "construction_benchmarks.txt");
+                                      "construction_benchmarks.txt",
+                                      "Construction");
   partialEquivalencCheckingBenchmarks(minN, maxN, reps, false, config,
-                                      "construction_no_ancilla.txt");
+                                      "construction_no_ancilla.txt",
+                                      "ConstructionNoAncilla");
 
   config.execution.runConstructionChecker = false;
   config.execution.runAlternatingChecker  = true;
@@ -972,7 +992,8 @@ TEST_F(PartialEquivalenceTest, Benchmark) {
   maxN                                    = 101;
   reps                                    = 20;
   partialEquivalencCheckingBenchmarks(minN, maxN, reps, false, config,
-                                      "alternating_benchmark.txt");
+                                      "alternating_benchmark.txt",
+                                      "Alternating");
 }
 
 TEST_F(PartialEquivalenceTest, ConstructionCheckerPartiallyEquivalent) {
