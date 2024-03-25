@@ -204,26 +204,27 @@ makeRandomStandardOperation(const size_t n, const qc::Qubit nrQubits,
                                  randomDistrNrControls(randomGenerator));
   Controls randomControls{};
   for (size_t i = 0; i < nrControls; i++) {
-    randomControls.emplace(randomNumbers[i + 2]);
+    randomControls.emplace(randomNumbers[i + 1]);
   }
 
   // Sliqec only supports the following gates
   std::vector<StandardOperation> possibleGates{};
   if (nrControls == 0) {
-    possibleGates = {StandardOperation{n, randomTarget, qc::X},
-                     StandardOperation{n, randomTarget, qc::Y},
-                     StandardOperation{n, randomTarget, qc::Z},
-                     StandardOperation{n, randomTarget, qc::H},
-                     StandardOperation{n, randomTarget, qc::S},
-                     StandardOperation{n, randomTarget, qc::Sdg},
-                     StandardOperation{n, randomTarget, qc::T},
-                     StandardOperation{n, randomTarget, qc::Tdg}};
-  } else if (nrControls == 1) {
     possibleGates = {
+        StandardOperation{n, randomTarget, qc::X},
+        StandardOperation{n, randomTarget, qc::Y},
+        StandardOperation{n, randomTarget, qc::Z},
+        StandardOperation{n, randomTarget, qc::H},
+        StandardOperation{n, randomTarget, qc::S},
+        StandardOperation{n, randomTarget, qc::Sdg},
+        StandardOperation{n, randomTarget, qc::T},
+        StandardOperation{n, randomTarget, qc::Tdg},
         StandardOperation{n, randomControls, randomTarget, qc::RX, {PI_2}},
         StandardOperation{n, randomControls, randomTarget, qc::RX, {-PI_2}},
         StandardOperation{n, randomControls, randomTarget, qc::RY, {PI_2}},
-        StandardOperation{n, randomControls, randomTarget, qc::RY, {-PI_2}},
+        StandardOperation{n, randomControls, randomTarget, qc::RY, {-PI_2}}};
+  } else if (nrControls == 1) {
+    possibleGates = {
         StandardOperation{n, randomControls, randomTarget, qc::X},
         StandardOperation{n, randomControls, randomTarget, qc::Z},
         StandardOperation{
@@ -238,7 +239,8 @@ makeRandomStandardOperation(const size_t n, const qc::Qubit nrQubits,
                                        Targets{randomTarget, qubitControl1},
                                        qc::SWAP}};
   }
-  std::uniform_int_distribution<size_t> randomDistrOp(0, possibleGates.size());
+  std::uniform_int_distribution<size_t> randomDistrOp(0,
+                                                      possibleGates.size() - 1);
 
   return possibleGates[randomDistrOp(randomGenerator)];
 }
@@ -283,9 +285,6 @@ generatePartiallyEquivalentCircuits(const size_t n, const qc::Qubit d,
     addStandardOperationToCircuit(circuit2, op, true);
   }
 
-  circuit1.barrier();
-  circuit2.barrier();
-
   // 3) Partially equivalent subcircuits
   // Divide data qubits into groups of size 1 or 2. For each group, we apply
   // pre-generated subcircuits, which are pairwise partially equivalent.
@@ -302,9 +301,6 @@ generatePartiallyEquivalentCircuits(const size_t n, const qc::Qubit d,
     groupBeginIndex += groupSize;
   }
 
-  circuit1.barrier();
-  circuit2.barrier();
-
   // 4) Arbitrary gates
   // Arbitrary gates are added to data qubits that are not measured
   if (d > m) {
@@ -320,9 +316,6 @@ generatePartiallyEquivalentCircuits(const size_t n, const qc::Qubit d,
           false);
     }
   }
-
-  circuit1.barrier();
-  circuit2.barrier();
 
   // 5) CNOT gates
   // For each ancilla qubit, add a CNOT that has the ancilla as control qubit,
@@ -904,20 +897,24 @@ TEST_F(PartialEquivalenceTest, ConstructionCheckerSliQECPeriodFinding8Qubits) {
 
 void partialEquivalencCheckingBenchmarks(
     const qc::Qubit minN, const qc::Qubit maxN, const size_t reps,
-    const bool addAncilla, const ec::Configuration& config,
-    const std::string& filename, const std::string& directoryname) {
-  std::fstream log2("benchmark_log.txt", std::ios::out | std::ios::app);
-  log2 << "starting benchmark.\nminN: " << minN << ", maxN: " << maxN
-       << ", reps: " << reps << ", addAncilla: " << addAncilla
-       << ", filename: " << filename << "\n";
-  log2.close();
+    const bool addAncilla, const ec::Configuration& /*config*/,
+    const std::string& /*filename*/, const std::string& directoryname) {
+  std::filesystem::create_directory("./benchmarkCircuits" + directoryname +
+                                    "a");
+  std::filesystem::create_directory("./benchmarkCircuits" + directoryname +
+                                    "b");
+  // std::fstream log2("benchmark_log.txt", std::ios::out | std::ios::app);
+  // log2 << "starting benchmark.\nminN: " << minN << ", maxN: " << maxN
+  //      << ", reps: " << reps << ", addAncilla: " << addAncilla
+  //      << ", filename: " << filename << "\n";
+  // log2.close();
 
   for (qc::Qubit d = minN; d < maxN; d += 5) {
-    double      totalTime{0};
-    std::size_t totalGatesC1{0};
-    std::size_t totalGatesC2{0};
-    std::size_t timeouts{0};
-    qc::Qubit   n{0};
+    // double      totalTime{0};
+    // std::size_t totalGatesC1{0};
+    // std::size_t totalGatesC2{0};
+    // std::size_t timeouts{0};
+    qc::Qubit n{0};
     if (addAncilla) {
       n = static_cast<qc::Qubit>(1.5 * d);
     } else {
@@ -925,51 +922,60 @@ void partialEquivalencCheckingBenchmarks(
     }
     const auto m = static_cast<qc::Qubit>(0.5 * d);
     for (size_t k = 0; k < reps; k++) {
+      auto [c1, c2] = dd::generatePartiallyEquivalentCircuits(n, d, m);
+      // print to file
       std::string circuitsFilename = std::to_string(d) + "_" +
                                      std::to_string(m) + "_" +
                                      std::to_string(k) + ".qasm";
-      const qc::QuantumComputation c1{"./benchmarkCircuits" + directoryname +
-                                      "a/" + circuitsFilename};
-      const qc::QuantumComputation c2{"./benchmarkCircuits" + directoryname +
-                                      "b/" + circuitsFilename};
+      std::fstream c1File("./benchmarkCircuits" + directoryname + "a/" +
+                              circuitsFilename,
+                          std::ios::out | std::ios::app);
+      c1.dumpOpenQASM2(c1File);
+      c1File.close();
 
-      ec::EquivalenceCheckingManager ecm(c1, c2, config);
-      ecm.run();
-      if (ecm.equivalence() == ec::EquivalenceCriterion::NoInformation) {
-        timeouts++;
-      } else {
-        EXPECT_TRUE(ecm.getResults().consideredEquivalent());
-      }
+      std::fstream c2File("./benchmarkCircuits" + directoryname + "b/" +
+                              circuitsFilename,
+                          std::ios::out | std::ios::app);
+      c2.dumpOpenQASM2(c2File);
+      c2File.close();
 
-      const auto   duration = ecm.getResults().checkTime;
-      std::fstream log("benchmark_log.txt", std::ios::out | std::ios::app);
-      if (ecm.equivalence() != ec::EquivalenceCriterion::NoInformation) {
-        totalTime += duration;
-      } else {
-        log << "TIMEOUT; ";
-      }
-      totalGatesC1 += c1.size();
-      totalGatesC2 += c2.size();
-      log << "k: " << k << ", d: " << d << ", m: " << m
-          << ", time: " << duration << "\n";
-      log.close();
+      // ec::EquivalenceCheckingManager ecm(c1, c2, config);
+      // ecm.run();
+      // if (ecm.equivalence() == ec::EquivalenceCriterion::NoInformation) {
+      //   timeouts++;
+      // } else {
+      //   EXPECT_TRUE(ecm.getResults().consideredEquivalent());
+      // }
+
+      // const auto   duration = ecm.getResults().checkTime;
+      // std::fstream log("benchmark_log.txt", std::ios::out | std::ios::app);
+      // if (ecm.equivalence() != ec::EquivalenceCriterion::NoInformation) {
+      //   totalTime += duration;
+      // } else {
+      //   log << "TIMEOUT; ";
+      // }
+      // totalGatesC1 += c1.size();
+      // totalGatesC2 += c2.size();
+      // log << "k: " << k << ", d: " << d << ", m: " << m
+      //     << ", time: " << duration << "\n";
+      // log.close();
     }
-    std::fstream resultsFile(filename.data(), std::ios::out | std::ios::app);
-    resultsFile << "" << n << "," << d << "," << m << "," << reps << ","
-                << (totalTime / static_cast<double>(reps - timeouts)) << ","
-                << (static_cast<double>(totalGatesC1) /
-                    static_cast<double>(reps))
-                << ","
-                << (static_cast<double>(totalGatesC2) /
-                    static_cast<double>(reps))
-                << "," << timeouts << "," << reps - timeouts << "\n";
+    // std::fstream resultsFile(filename.data(), std::ios::out | std::ios::app);
+    // resultsFile << "" << n << "," << d << "," << m << "," << reps << ","
+    //             << (totalTime / static_cast<double>(reps - timeouts)) << ","
+    //             << (static_cast<double>(totalGatesC1) /
+    //                 static_cast<double>(reps))
+    //             << ","
+    //             << (static_cast<double>(totalGatesC2) /
+    //                 static_cast<double>(reps))
+    //             << "," << timeouts << "," << reps - timeouts << "\n";
 
-    if (timeouts >= reps - 3) {
-      resultsFile << "stopping because of too many timeouts\n";
-      resultsFile.close();
-      return;
-    }
-    resultsFile.close();
+    // if (timeouts >= reps - 3) {
+    //   resultsFile << "stopping because of too many timeouts\n";
+    //   resultsFile.close();
+    //   return;
+    // }
+    // resultsFile.close();
   }
 }
 
