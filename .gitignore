@@ -169,3 +169,11 @@ Thumbs.db
 /docs/**/build
 .vs
 out/build
+
+
+benchmark*
+*.txt
+*.qasm
+pyvenv*
+bin
+lib64
